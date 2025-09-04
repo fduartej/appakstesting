@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: database-test-api
-          image: YOUR_ACR_NAME.azurecr.io/database-test-api:latest
+          image: crintegrationappsnoprod01.azurecr.io/database-test-api:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
