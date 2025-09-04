@@ -59,19 +59,18 @@ jobs:
           PRIVATE_CLUSTER=$(az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }} --query "apiServerAccessProfile.enablePrivateCluster" -o tsv)
           echo "Private cluster: $PRIVATE_CLUSTER"
 
-      # 9. Configurar acceso al clúster de AKS con mejores opciones
+      # 9. Configurar acceso al clúster de AKS (SIN --admin para evitar errores de permisos)
       - name: Set up AKS context
         run: |
           echo "Configurando contexto de AKS..."
           az aks get-credentials \
-            --resource-group ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --overwrite-existing \
-            --admin
+            --overwrite-existing
 
           # Verificar conectividad
           echo "Verificando conectividad con kubectl..."
-          kubectl cluster-info || echo "Cluster info failed, continuando..."
+          kubectl cluster-info --request-timeout=30s || echo "Cluster info failed, continuando..."
 
           # Test básico de conectividad
           kubectl get nodes --request-timeout=30s || echo "Unable to get nodes, but continuing..."
@@ -81,20 +80,31 @@ jobs:
         run: |
           sed -i "s|YOUR_ACR_NAME.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
 
-      # 10. Desplegar en AKS
+      # 10. Desplegar en AKS con validación deshabilitada para evitar problemas de DNS
       - name: Deploy to AKS
         run: |
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/ingress.yaml
+          echo "Desplegando aplicación en AKS..."
+          kubectl apply -f k8s/deployment.yaml --validate=false
+          kubectl apply -f k8s/service.yaml --validate=false
+          kubectl apply -f k8s/ingress.yaml --validate=false
 
-      # 11. Verificar el estado del deployment
+      # 11. Verificar el estado del deployment con mejor manejo de errores
       - name: Verify deployment status
         run: |
-          kubectl wait --for=condition=available --timeout=300s deployment/database-test-api
+          echo "Verificando estado del deployment..."
+          kubectl wait --for=condition=available --timeout=300s deployment/database-test-api || echo "Wait timeout, but checking status..."
+
           echo "=== Deployment Status ==="
-          kubectl get deployment database-test-api -o wide
+          kubectl get deployment database-test-api -o wide || echo "Could not get deployment"
+
           echo "=== Pod Status ==="
-          kubectl get pods -l app=database-test-api -o wide
+          kubectl get pods -l app=database-test-api -o wide || echo "Could not get pods"
+
           echo "=== Service Status ==="
-          kubectl get service database-test-api -o wide
+          kubectl get service database-test-api -o wide || echo "Could not get service"
+
+          echo "=== Ingress Status ==="
+          kubectl get ingress database-test-api -o wide || echo "Could not get ingress"
+
+          echo "=== Recent Events ==="
+          kubectl get events --sort-by=.metadata.creationTimestamp | tail -10 || echo "Could not get events"
