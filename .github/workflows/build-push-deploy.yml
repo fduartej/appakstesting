@@ -19,11 +19,17 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: "9.0.x"
 
       # 3. Build de la aplicación
       - name: Build application
         run: dotnet build --configuration Release
+
+      # 7. Autenticarse en Azure
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       # 4. Iniciar sesión en Azure Container Registry
       - name: Login to Azure Container Registry
@@ -43,16 +49,32 @@ jobs:
         run: |
           docker push ${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest
 
-      # 7. Autenticarse en Azure
-      - name: Login to Azure
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      # 8. Verificar conectividad con AKS antes de obtener credenciales
+      - name: Verify AKS connectivity
+        run: |
+          echo "Verificando acceso al cluster AKS..."
+          az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }}
 
-      # 8. Configurar acceso al clúster de AKS
+          # Verificar si el cluster es privado
+          PRIVATE_CLUSTER=$(az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }} --query "apiServerAccessProfile.enablePrivateCluster" -o tsv)
+          echo "Private cluster: $PRIVATE_CLUSTER"
+
+      # 9. Configurar acceso al clúster de AKS con mejores opciones
       - name: Set up AKS context
         run: |
-          az aks get-credentials --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }} --overwrite-existing
+          echo "Configurando contexto de AKS..."
+          az aks get-credentials \
+            --resource-group ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --overwrite-existing \
+            --admin
+
+          # Verificar conectividad
+          echo "Verificando conectividad con kubectl..."
+          kubectl cluster-info || echo "Cluster info failed, continuando..."
+
+          # Test básico de conectividad
+          kubectl get nodes --request-timeout=30s || echo "Unable to get nodes, but continuing..."
 
       # 9. Actualizar imagen en deployment
       - name: Update deployment image
