@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-test-api
+  labels:
+    app: database-test-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: database-test-api
+  template:
+    metadata:
+      labels:
+        app: database-test-api
+    spec:
+      containers:
+        - name: database-test-api
+          image: YOUR_ACR_NAME.azurecr.io/database-test-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"

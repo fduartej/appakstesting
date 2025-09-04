@@ -1,0 +1,78 @@
+name: Build Push Deploy
+
+on:
+  push:
+    branches:
+      - main # Cambia esto si tu rama principal tiene otro nombre
+
+jobs:
+  # Job para construir y subir imagen Docker a ACR
+  build-push-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Clonar el repositorio
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Configurar .NET
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # 3. Build de la aplicación
+      - name: Build application
+        run: dotnet build --configuration Release
+
+      # 4. Iniciar sesión en Azure Container Registry
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.AZURE_ACR_SERVER }}
+          username: ${{ secrets.AZURE_ACR_USERNAME }}
+          password: ${{ secrets.AZURE_ACR_PASSWORD }}
+
+      # 5. Construir la imagen Docker
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest .
+
+      # 6. Subir la imagen a Azure Container Registry
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest
+
+      # 7. Autenticarse en Azure
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # 8. Configurar acceso al clúster de AKS
+      - name: Set up AKS context
+        run: |
+          az aks get-credentials --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }} --overwrite-existing
+
+      # 9. Actualizar imagen en deployment
+      - name: Update deployment image
+        run: |
+          sed -i "s|YOUR_ACR_NAME.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
+
+      # 10. Desplegar en AKS
+      - name: Deploy to AKS
+        run: |
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      # 11. Verificar el estado del deployment
+      - name: Verify deployment status
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/database-test-api
+          echo "=== Deployment Status ==="
+          kubectl get deployment database-test-api -o wide
+          echo "=== Pod Status ==="
+          kubectl get pods -l app=database-test-api -o wide
+          echo "=== Service Status ==="
+          kubectl get service database-test-api -o wide
