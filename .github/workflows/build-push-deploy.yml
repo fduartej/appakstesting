@@ -49,62 +49,95 @@ jobs:
         run: |
           docker push ${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest
 
-      # 8. Verificar conectividad con AKS antes de obtener credenciales
-      - name: Verify AKS connectivity
+      # 8. Verificar conectividad con AKS privado
+      - name: Verify AKS private cluster access
         run: |
-          echo "Verificando acceso al cluster AKS..."
+          echo "Verificando acceso al cluster AKS privado..."
           az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }}
 
           # Verificar si el cluster es privado
           PRIVATE_CLUSTER=$(az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }} --query "apiServerAccessProfile.enablePrivateCluster" -o tsv)
           echo "Private cluster: $PRIVATE_CLUSTER"
 
-      # 9. Configurar acceso al clúster de AKS (SIN --admin para evitar errores de permisos)
-      - name: Set up AKS context
+      # 9. Test de conectividad usando runCommand
+      - name: Test AKS connectivity via runCommand
         run: |
-          echo "Configurando contexto de AKS..."
-          az aks get-credentials \
+          echo "Probando conectividad usando az aks command invoke..."
+          az aks command invoke \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --overwrite-existing
+            --command "kubectl get nodes -o wide"
 
-          # Verificar conectividad
-          echo "Verificando conectividad con kubectl..."
-          kubectl cluster-info --request-timeout=30s || echo "Cluster info failed, continuando..."
-
-          # Test básico de conectividad
-          kubectl get nodes --request-timeout=30s || echo "Unable to get nodes, but continuing..."
-
-      # 9. Actualizar imagen en deployment
-      - name: Update deployment image
+      # 10. Actualizar imagen en archivos YAML existentes
+      - name: Update image in existing YAML files
         run: |
-          sed -i "s|YOUR_ACR_NAME.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
+          echo "Actualizando imagen en archivos YAML existentes..."
+          # Actualizar la imagen en deployment.yaml
+          sed -i "s|crintegrationappsnoprod01.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
 
-      # 10. Desplegar en AKS con validación deshabilitada para evitar problemas de DNS
-      - name: Deploy to AKS
+          echo "Contenido del deployment actualizado:"
+          cat k8s/deployment.yaml
+
+      # 11. Deploy usando runCommand para cluster privado
+      - name: Deploy to AKS private cluster
         run: |
-          echo "Desplegando aplicación en AKS..."
-          kubectl apply -f k8s/deployment.yaml --validate=false
-          kubectl apply -f k8s/service.yaml --validate=false
-          kubectl apply -f k8s/ingress.yaml --validate=false
+          echo "Desplegando en cluster AKS privado usando runCommand..."
 
-      # 11. Verificar el estado del deployment con mejor manejo de errores
+          # Deploy deployment
+          echo "Desplegando deployment..."
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl apply -f - << 'EOF'
+          $(cat k8s/deployment.yaml)
+          EOF"
+
+          # Deploy service
+          echo "Desplegando service..."
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl apply -f - << 'EOF'
+          $(cat k8s/service.yaml)
+          EOF"
+
+          # Deploy ingress
+          echo "Desplegando ingress..."
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl apply -f - << 'EOF'
+          $(cat k8s/ingress.yaml)
+          EOF"
+
+      # 12. Verificar el estado del deployment usando runCommand
       - name: Verify deployment status
         run: |
           echo "Verificando estado del deployment..."
-          kubectl wait --for=condition=available --timeout=300s deployment/database-test-api || echo "Wait timeout, but checking status..."
 
-          echo "=== Deployment Status ==="
-          kubectl get deployment database-test-api -o wide || echo "Could not get deployment"
+          # Esperar a que el deployment esté listo
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl rollout status deployment/database-test-api --timeout=300s"
 
+          # Verificar estado de pods
           echo "=== Pod Status ==="
-          kubectl get pods -l app=database-test-api -o wide || echo "Could not get pods"
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get pods -l app=database-test-api -o wide"
 
-          echo "=== Service Status ==="
-          kubectl get service database-test-api -o wide || echo "Could not get service"
+          # Verificar deployment
+          echo "=== Deployment Status ==="
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get deployment database-test-api -o wide"
 
-          echo "=== Ingress Status ==="
-          kubectl get ingress database-test-api -o wide || echo "Could not get ingress"
-
+          # Ver eventos recientes
           echo "=== Recent Events ==="
-          kubectl get events --sort-by=.metadata.creationTimestamp | tail -10 || echo "Could not get events"
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get events --sort-by=.metadata.creationTimestamp --field-selector involvedObject.name=database-test-api"
