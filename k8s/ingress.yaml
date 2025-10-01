@@ -7,7 +7,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: database-test-api.contoso.com # Cambia esto por tu dominio
+    - host: database-test-api.calidda.com.pe # Cambia esto por tu dominio
       http:
         paths:
           - path: /
