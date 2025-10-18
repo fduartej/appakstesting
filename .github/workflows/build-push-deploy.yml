@@ -77,10 +77,10 @@ jobs:
           sed -i "s|crintegrationappsnoprod01.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
 
           # Actualizar el Client ID en secretproviderclass.yaml
-          sed -i "s|your-managed-identity-client-id|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/secretproviderclass.yaml
+          sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/secretproviderclass.yaml
 
           # Actualizar el Client ID en serviceaccount.yaml
-          sed -i "s|your-managed-identity-client-id|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
+          sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
 
           echo "=== Archivos actualizados ==="
           echo "Deployment:"
