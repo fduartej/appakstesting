@@ -13,7 +13,9 @@ spec:
     metadata:
       labels:
         app: database-test-api
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: database-test-api-sa
       containers:
         - name: database-test-api
           image: crintegrationappsnoprod01.azurecr.io/database-test-api:latest
@@ -26,6 +28,11 @@ spec:
               value: "Production"
             - name: ASPNETCORE_URLS
               value: "http://+:8080"
+          # Montar secretos del Key Vault
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
           # Health Checks
           livenessProbe:
             httpGet:
@@ -43,11 +50,11 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
-          # Resource limits (opcional pero recomendado)
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "250m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
+      # Volumen para Key Vault
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "database-test-api-secrets"

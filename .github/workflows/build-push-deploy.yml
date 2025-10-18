@@ -68,28 +68,49 @@ jobs:
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
             --command "kubectl get nodes -o wide"
 
-      # 10. Actualizar imagen en archivos YAML existentes
-      - name: Update image in existing YAML files
+      # 10. Actualizar imagen y configuración en archivos YAML
+      - name: Update image and config in YAML files
         run: |
-          echo "Actualizando imagen en archivos YAML existentes..."
+          echo "Actualizando imagen y configuración en archivos YAML..."
+
           # Actualizar la imagen en deployment.yaml
           sed -i "s|crintegrationappsnoprod01.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
 
-          echo "Contenido del deployment actualizado:"
+          # Actualizar el Client ID en secretproviderclass.yaml
+          sed -i "s|your-managed-identity-client-id|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/secretproviderclass.yaml
+
+          # Actualizar el Client ID en serviceaccount.yaml
+          sed -i "s|your-managed-identity-client-id|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
+
+          echo "=== Archivos actualizados ==="
+          echo "Deployment:"
           cat k8s/deployment.yaml
+          echo "SecretProviderClass:"
+          cat k8s/secretproviderclass.yaml
+          echo "ServiceAccount:"
+          cat k8s/serviceaccount.yaml
 
       # 11. Deploy usando runCommand para cluster privado
       - name: Deploy to AKS private cluster
         run: |
           echo "Desplegando en cluster AKS privado usando runCommand..."
 
-          # Deploy deployment
-          echo "Desplegando deployment..."
+          # Deploy ServiceAccount
+          echo "Desplegando ServiceAccount..."
           az aks command invoke \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
             --command "kubectl apply -f - << 'EOF'
-          $(cat k8s/deployment.yaml)
+          $(cat k8s/serviceaccount.yaml)
+          EOF"
+
+          # Deploy SecretProviderClass
+          echo "Desplegando SecretProviderClass..."
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl apply -f - << 'EOF'
+          $(cat k8s/secretproviderclass.yaml)
           EOF"
 
           # Deploy service
@@ -99,6 +120,15 @@ jobs:
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
             --command "kubectl apply -f - << 'EOF'
           $(cat k8s/service.yaml)
+          EOF"
+
+          # Deploy deployment
+          echo "Desplegando deployment..."
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl apply -f - << 'EOF'
+          $(cat k8s/deployment.yaml)
           EOF"
 
           # Deploy ingress
@@ -115,6 +145,20 @@ jobs:
         run: |
           echo "Verificando estado del deployment..."
 
+          # Verificar SecretProviderClass
+          echo "=== SecretProviderClass Status ==="
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get secretproviderclass database-test-api-secrets -o wide"
+
+          # Verificar ServiceAccount
+          echo "=== ServiceAccount Status ==="
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get serviceaccount database-test-api-sa -o yaml"
+
           # Esperar a que el deployment esté listo
           az aks command invoke \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
@@ -128,12 +172,26 @@ jobs:
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
             --command "kubectl get pods -l app=database-test-api -o wide"
 
+          # Verificar secretos montados
+          echo "=== Secrets Status ==="
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get secrets"
+
           # Verificar deployment
           echo "=== Deployment Status ==="
           az aks command invoke \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
             --command "kubectl get deployment database-test-api -o wide"
+
+          # Ver logs del pod para verificar conexión a Key Vault
+          echo "=== Pod Logs ==="
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl logs -l app=database-test-api --tail=50"
 
           # Ver eventos recientes
           echo "=== Recent Events ==="
