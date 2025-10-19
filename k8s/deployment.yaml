@@ -28,6 +28,9 @@ spec:
               value: "Production"
             - name: ASPNETCORE_URLS
               value: "http://+:8080"
+            # Ruta donde se montan los secretos de Key Vault
+            - name: KeyVault__SecretsPath
+              value: "/mnt/secrets-store"
           # Montar secretos del Key Vault
           volumeMounts:
             - name: secrets-store
