@@ -79,6 +79,9 @@ jobs:
           # Actualizar el Client ID en secretproviderclass.yaml
           sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/secretproviderclass.yaml
 
+          # Actualizar el Tenant ID en secretproviderclass.yaml
+          sed -i "s|AZURE_TENANT_ID|${{ secrets.AZURE_TENANT_ID }}|g" k8s/secretproviderclass.yaml
+
           # Actualizar el Client ID en serviceaccount.yaml
           sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
 
