@@ -3,8 +3,7 @@ nameOverride: database-test-api
 
 # Imagen Docker
 image:
-  repository: crintegrationappsnoprod01.azurecr.io/database-test-api
-  pullPolicy: IfNotPresent
+  repository: "" # Se construye dinámicamente: ${AZURE_ACR_SERVER}/${IMAGE_NAME}
   tag: "" # lo inyecta CI (el mismo para todos los entornos)
 
 # Configuración de réplicas
