@@ -76,20 +76,12 @@ jobs:
           # Actualizar la imagen en deployment.yaml
           sed -i "s|crintegrationappsnoprod01.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
 
-          # Actualizar el Client ID en secretproviderclass.yaml
-          sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/secretproviderclass.yaml
-
-          # Actualizar el Tenant ID en secretproviderclass.yaml
-          sed -i "s|AZURE_TENANT_ID|${{ secrets.AZURE_TENANT_ID }}|g" k8s/secretproviderclass.yaml
-
           # Actualizar el Client ID en serviceaccount.yaml
           sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
 
           echo "=== Archivos actualizados ==="
           echo "Deployment:"
           cat k8s/deployment.yaml
-          echo "SecretProviderClass:"
-          cat k8s/secretproviderclass.yaml
           echo "ServiceAccount:"
           cat k8s/serviceaccount.yaml
 
@@ -105,15 +97,6 @@ jobs:
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
             --command "kubectl apply -f - << 'EOF'
           $(cat k8s/serviceaccount.yaml)
-          EOF"
-
-          # Deploy SecretProviderClass
-          echo "Desplegando SecretProviderClass..."
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl apply -f - << 'EOF'
-          $(cat k8s/secretproviderclass.yaml)
           EOF"
 
           # Deploy service
@@ -142,125 +125,3 @@ jobs:
             --command "kubectl apply -f - << 'EOF'
           $(cat k8s/ingress.yaml)
           EOF"
-
-      # 12. Verificar el estado del deployment y Azure Key Vault
-      - name: Verify deployment and Key Vault integration
-        run: |
-          echo "🔍 Verificando deployment y integración con Azure Key Vault..."
-          echo "============================================================="
-
-          # Obtener información del pod
-          echo "=== Obteniendo información del pod ==="
-          POD_NAME=$(az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl get pods -l app=database-test-api -o jsonpath='{.items[0].metadata.name}'" --query "logs" -o tsv)
-
-          echo "📝 Pod Name: $POD_NAME"
-
-          # Verificar SecretProviderClass detallado
-          echo -e "\n=== 1. SecretProviderClass Status ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl describe secretproviderclass database-test-api-secrets"
-
-          # Verificar ServiceAccount con Workload Identity
-          echo -e "\n=== 2. ServiceAccount y Workload Identity ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl get serviceaccount database-test-api-sa -o jsonpath='{.metadata.annotations}'"
-
-          # Verificar montaje del volumen Key Vault
-          if [ "$POD_NAME" != "" ] && [ "$POD_NAME" != "null" ]; then
-            echo -e "\n=== 3. Verificación del montaje de Key Vault ==="
-            echo "🔍 Verificando si el volumen de Key Vault está montado..."
-            
-            az aks command invoke \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-              --command "kubectl describe pod $POD_NAME | grep -A 10 'secrets-store'"
-
-            echo -e "\n🗂️ Verificando archivos de secretos en /mnt/secrets-store/..."
-            az aks command invoke \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-              --command "kubectl exec $POD_NAME -- ls -la /mnt/secrets-store/ 2>/dev/null" \
-              && echo "✅ Secretos montados correctamente" \
-              || echo "❌ No se pudieron acceder a los secretos"
-
-            echo -e "\n📊 Contando archivos de secretos..."
-            SECRET_COUNT=$(az aks command invoke \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-              --command "kubectl exec $POD_NAME -- find /mnt/secrets-store/ -type f 2>/dev/null | wc -l" --query "logs" -o tsv)
-            echo "📈 Número de secretos encontrados: $SECRET_COUNT"
-
-            # Verificar Kubernetes Secret creado por CSI
-            echo -e "\n=== 4. Kubernetes Secret Object ==="
-            az aks command invoke \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-              --command "kubectl get secret database-test-api-secrets -o yaml 2>/dev/null" \
-              && echo "✅ Kubernetes Secret creado por CSI" \
-              || echo "❌ Kubernetes Secret no encontrado"
-
-            # Verificar variables de entorno
-            echo -e "\n=== 5. Variables de entorno de la aplicación ==="
-            az aks command invoke \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-              --command "kubectl exec $POD_NAME -- env | grep -E '(ConnectionStrings|ASPNETCORE|ApiKey)' 2>/dev/null" \
-              && echo "✅ Variables de entorno configuradas" \
-              || echo "⚠️ Variables de entorno específicas no encontradas"
-
-            # Verificar logs de la aplicación relacionados con Key Vault
-            echo -e "\n=== 6. Logs de aplicación relacionados con Key Vault ==="
-            az aks command invoke \
-              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-              --command "kubectl logs $POD_NAME --tail=100 | grep -i 'keyvault\|secret\|connection\|auth' | head -10" \
-              || echo "ℹ️ No se encontraron logs específicos de Key Vault"
-
-          else
-            echo "❌ No se encontró ningún pod para verificar"
-          fi
-
-          # Verificar logs del Azure Key Vault Provider
-          echo -e "\n=== 7. Logs del Azure Key Vault Provider ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl logs -n kube-system -l app=csi-secrets-store-provider-azure --tail=20 | grep -i 'database-test-api\|error\|failed'" \
-            || echo "ℹ️ No se encontraron logs relevantes del provider"
-
-          # Verificar eventos de Kubernetes
-          echo -e "\n=== 8. Eventos relacionados con SecretProviderClass ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl get events --field-selector involvedObject.name=database-test-api-secrets --sort-by=.metadata.creationTimestamp"
-
-          # Estado del deployment
-          echo -e "\n=== 9. Estado final del deployment ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl rollout status deployment/database-test-api --timeout=300s"
-
-          # Resumen final
-          echo -e "\n=== 10. Resumen final ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl get pods,secretproviderclass,secrets -l app=database-test-api"
-
-          # Logs finales de la aplicación
-          echo -e "\n=== 11. Logs finales de la aplicación ==="
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl logs -l app=database-test-api --tail=30"
-
-          echo -e "\n🏁 Verificación completada. Revisa los resultados arriba para identificar cualquier problema con Key Vault."
