@@ -1,37 +1,49 @@
-name: Build Push Deploy
+name: Build and Deploy Multi-Environment
 
 on:
   push:
     branches:
-      - main # Cambia esto si tu rama principal tiene otro nombre
+      - main # Producción
+      - develop # Desarrollo
+      - qa # QA
+      - uat # UAT
+      - helm # Testing Helm
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  IMAGE_NAME: database-test-api
 
 jobs:
-  # Job para construir y subir imagen Docker a ACR
-  build-push-deploy:
+  # Job 1: Build una sola vez y genera imagen
+  build:
     runs-on: ubuntu-latest
-
+    outputs:
+      image-tag: ${{ steps.vars.outputs.image-tag }}
+      short-sha: ${{ steps.vars.outputs.short-sha }}
     steps:
-      # 1. Clonar el repositorio
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Configurar .NET
+      - name: Set build variables
+        id: vars
+        run: |
+          echo "image-tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "short-sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      # 3. Build de la aplicación
       - name: Build application
         run: dotnet build --configuration Release
 
-      # 7. Autenticarse en Azure
       - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # 4. Iniciar sesión en Azure Container Registry
       - name: Login to Azure Container Registry
         uses: azure/docker-login@v1
         with:
@@ -39,89 +51,182 @@ jobs:
           username: ${{ secrets.AZURE_ACR_USERNAME }}
           password: ${{ secrets.AZURE_ACR_PASSWORD }}
 
-      # 5. Construir la imagen Docker
-      - name: Build Docker image
+      - name: Build and push Docker image
         run: |
-          docker build -t ${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest .
+          echo "🐳 Building image with tag: ${{ steps.vars.outputs.image-tag }}"
+          docker build -t ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }} .
+          docker push ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }}
 
-      # 6. Subir la imagen a Azure Container Registry
-      - name: Push Docker image
+          # También tag como latest para el branch correspondiente
+          docker tag ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }} ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest
+
+  # Job 2: Deploy a DEV usando Helm
+  deploy-dev:
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/helm'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy with Helm to AKS
         run: |
-          docker push ${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest
+          echo "🚀 Deploying to DEV environment with Helm"
+          echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
+          echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "🏷️ Config Label: ${{ vars.AZURE_APP_CONFIG_LABEL }}"
 
-      # 8. Verificar conectividad con AKS privado
-      - name: Verify AKS private cluster access
-        run: |
-          echo "Verificando acceso al cluster AKS privado..."
-          az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }}
+          # Crear un tarball del chart para enviarlo
+          tar -czf chart.tar.gz k8s/chart/
 
-          # Verificar si el cluster es privado
-          PRIVATE_CLUSTER=$(az aks show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }} --query "apiServerAccessProfile.enablePrivateCluster" -o tsv)
-          echo "Private cluster: $PRIVATE_CLUSTER"
-
-      # 9. Test de conectividad usando runCommand
-      - name: Test AKS connectivity via runCommand
-        run: |
-          echo "Probando conectividad usando az aks command invoke..."
           az aks command invoke \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl get nodes -o wide"
+            --file chart.tar.gz \
+            --command "tar -xzf chart.tar.gz && helm upgrade --install ${{ env.IMAGE_NAME }} ./k8s/chart \
+              --set image.repository=${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }} \
+              --set image.tag=${{ needs.build.outputs.image-tag }} \
+              --set ingress.host=${{ vars.INGRESS_HOST }} \
+              --set environment=${{ vars.APP_ENVIRONMENT }} \
+              --set appConfig.endpoint=${{ vars.AZURE_APP_CONFIG_ENDPOINT }} \
+              --set appConfig.label=${{ vars.AZURE_APP_CONFIG_LABEL }} \
+              --set workloadIdentity.clientId=${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }} \
+              --namespace ${{ vars.KUBERNETES_NAMESPACE }} \
+              --create-namespace \
+              --wait \
+              --timeout=10m"
 
-      # 10. Actualizar imagen y configuración en archivos YAML
-      - name: Update image and config in YAML files
+      - name: Verify Helm deployment
         run: |
-          echo "Actualizando imagen y configuración en archivos YAML..."
+          echo "✅ Verificando deployment de Helm en DEV..."
 
-          # Actualizar la imagen en deployment.yaml
-          sed -i "s|crintegrationappsnoprod01.azurecr.io/database-test-api:latest|${{ secrets.AZURE_ACR_SERVER }}/database-test-api:latest|g" k8s/deployment.yaml
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "helm status ${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }}"
 
-          # Actualizar el Client ID en serviceaccount.yaml
-          sed -i "s|APP_IDENTITY_CLIENT_ID|${{ secrets.APP_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
+          echo "📊 Estado de pods:"
+          az aks command invoke \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get pods -l app=${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }} -o wide"
 
-          echo "=== Archivos actualizados ==="
-          echo "Deployment:"
-          cat k8s/deployment.yaml
-          echo "ServiceAccount:"
-          cat k8s/serviceaccount.yaml
+  # Job 3: Deploy a QA usando kubectl manifests
+  deploy-qa:
+    if: github.ref == 'refs/heads/qa'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: qa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # 11. Deploy usando runCommand para cluster privado
-      - name: Deploy to AKS private cluster
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to QA environment
         run: |
-          echo "Desplegando en cluster AKS privado usando runCommand..."
+          echo "🚀 Deploying to QA environment with kubectl"
+          echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
+          echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "📁 Namespace: ${{ vars.KUBERNETES_NAMESPACE }}"
 
-          # Deploy ServiceAccount
-          echo "Desplegando ServiceAccount..."
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl apply -f - << 'EOF'
-          $(cat k8s/serviceaccount.yaml)
-          EOF"
+          # Aplicar manifests con valores específicos de QA
+          sed -i "s|{{IMAGE_TAG}}|${{ needs.build.outputs.image-tag }}|g" k8s/deployment.yaml
+          sed -i "s|{{INGRESS_HOST}}|${{ vars.INGRESS_HOST }}|g" k8s/ingress.yaml
+          sed -i "s|{{ENVIRONMENT}}|${{ vars.APP_ENVIRONMENT }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_APP_CONFIG_ENDPOINT}}|${{ vars.AZURE_APP_CONFIG_ENDPOINT }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_APP_CONFIG_LABEL}}|${{ vars.AZURE_APP_CONFIG_LABEL }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_MANAGED_IDENTITY_CLIENT_ID}}|${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
+          sed -i "s|{{NAMESPACE}}|${{ vars.KUBERNETES_NAMESPACE }}|g" k8s/*.yaml
 
-          # Deploy service
-          echo "Desplegando service..."
           az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl apply -f - << 'EOF'
-          $(cat k8s/service.yaml)
-          EOF"
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --file k8s/ \
+            --command "kubectl apply -f . -n ${{ vars.KUBERNETES_NAMESPACE }}"
 
-          # Deploy deployment
-          echo "Desplegando deployment..."
-          az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl apply -f - << 'EOF'
-          $(cat k8s/deployment.yaml)
-          EOF"
+  # Job 4: Deploy a UAT usando kubectl manifests
+  deploy-uat:
+    if: github.ref == 'refs/heads/uat'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: uat
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-          # Deploy ingress
-          echo "Desplegando ingress..."
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to UAT environment
+        run: |
+          echo "🚀 Deploying to UAT environment with kubectl"
+          echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
+          echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "📁 Namespace: ${{ vars.KUBERNETES_NAMESPACE }}"
+
+          # Aplicar manifests con valores específicos de UAT
+          sed -i "s|{{IMAGE_TAG}}|${{ needs.build.outputs.image-tag }}|g" k8s/deployment.yaml
+          sed -i "s|{{INGRESS_HOST}}|${{ vars.INGRESS_HOST }}|g" k8s/ingress.yaml
+          sed -i "s|{{ENVIRONMENT}}|${{ vars.APP_ENVIRONMENT }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_APP_CONFIG_ENDPOINT}}|${{ vars.AZURE_APP_CONFIG_ENDPOINT }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_APP_CONFIG_LABEL}}|${{ vars.AZURE_APP_CONFIG_LABEL }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_MANAGED_IDENTITY_CLIENT_ID}}|${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
+          sed -i "s|{{NAMESPACE}}|${{ vars.KUBERNETES_NAMESPACE }}|g" k8s/*.yaml
+
           az aks command invoke \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_AKS_CLUSTER }} \
-            --command "kubectl apply -f - << 'EOF'
-          $(cat k8s/ingress.yaml)
-          EOF"
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --file k8s/ \
+            --command "kubectl apply -f . -n ${{ vars.KUBERNETES_NAMESPACE }}"
+
+  # Job 5: Deploy a PROD usando kubectl manifests
+  deploy-prod:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to PROD environment
+        run: |
+          echo "🚀 Deploying to PROD environment with kubectl"
+          echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
+          echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "📁 Namespace: ${{ vars.KUBERNETES_NAMESPACE }}"
+
+          # Aplicar manifests con valores específicos de PROD
+          sed -i "s|{{IMAGE_TAG}}|${{ needs.build.outputs.image-tag }}|g" k8s/deployment.yaml
+          sed -i "s|{{INGRESS_HOST}}|${{ vars.INGRESS_HOST }}|g" k8s/ingress.yaml
+          sed -i "s|{{ENVIRONMENT}}|${{ vars.APP_ENVIRONMENT }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_APP_CONFIG_ENDPOINT}}|${{ vars.AZURE_APP_CONFIG_ENDPOINT }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_APP_CONFIG_LABEL}}|${{ vars.AZURE_APP_CONFIG_LABEL }}|g" k8s/deployment.yaml
+          sed -i "s|{{AZURE_MANAGED_IDENTITY_CLIENT_ID}}|${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
+          sed -i "s|{{NAMESPACE}}|${{ vars.KUBERNETES_NAMESPACE }}|g" k8s/*.yaml
+
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --file k8s/ \
+            --command "kubectl apply -f . -n ${{ vars.KUBERNETES_NAMESPACE }}"
+
+          echo "✅ Production deployment completed successfully!"

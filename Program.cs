@@ -4,15 +4,16 @@ using Microsoft.Extensions.Configuration.AzureAppConfiguration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Lee el endpoint desde env var (o hardcodea si prefieres)
+// Lee el endpoint y label desde env vars
 var appConfigEndpoint = Environment.GetEnvironmentVariable("AzureAppConfigEndpoint")
                         ?? "https://appconfig-noprod-01.azconfig.io";
+var appConfigLabel = Environment.GetEnvironmentVariable("AzureAppConfigLabel") ?? "dev";
 
 // Conectar a Azure App Configuration y a Key Vault (referencias)
 builder.Configuration.AddAzureAppConfiguration(options =>
 {
     options.Connect(new Uri(appConfigEndpoint), new DefaultAzureCredential())
-           .Select("app:db-testapi:*", labelFilter: "dev")
+           .Select("app:db-testapi:*", labelFilter: appConfigLabel)
            .ConfigureKeyVault(kv => kv.SetCredential(new DefaultAzureCredential()));
 });
 
@@ -68,6 +69,19 @@ app.MapGet("/testconfig", (IConfiguration config) =>
 {
     var conn = config["app:db-testapi:ConnectionStrings--DefaultConnection"];
     return Results.Ok(new { ConnectionString = conn ?? "(nulo)" });
+});
+
+app.MapGet("/config-info", () =>
+{
+    var configInfo = new
+    {
+        Environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development",
+        AzureAppConfigEndpoint = Environment.GetEnvironmentVariable("AzureAppConfigEndpoint") ?? "https://appconfig-noprod-01.azconfig.io",
+        AzureAppConfigLabel = Environment.GetEnvironmentVariable("AzureAppConfigLabel") ?? "dev",
+        AzureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID") ?? "(not set)",
+        Timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC")
+    };
+    return Results.Ok(configInfo);
 });
 
 // Configure the HTTP request pipeline.

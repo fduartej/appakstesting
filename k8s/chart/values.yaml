@@ -1,0 +1,57 @@
+# Configuración genérica para aplicaciones
+nameOverride: database-test-api
+
+# Imagen Docker
+image:
+  repository: crintegrationappsnoprod01.azurecr.io/database-test-api
+  pullPolicy: IfNotPresent
+  tag: "" # lo inyecta CI (el mismo para todos los entornos)
+
+# Configuración de réplicas
+replicaCount: 2 # default; puedes sobreescribir por entorno
+
+# Configuración de puertos
+ports:
+  http: 8080
+
+# Configuración de ambiente
+environment: Development
+
+# Configuración de ingress
+ingress:
+  enabled: true
+  className: nginx
+  host: "" # lo setea CI por entorno (ej. database-test-api.calidda.com.pe)
+  path: /
+  tls: [] # si tienes certs, lo setea CI
+
+# Configuración Azure App Configuration
+appConfig:
+  endpoint: "" # https://appcs-np-eus2-01.azconfig.io o https://appcs-pr-eus2-01.azconfig.io
+  label: "" # dev | qa | uat | prod
+
+# Configuración Workload Identity
+workloadIdentity:
+  clientId: "" # clientId de la MI del entorno
+
+# Service Account
+serviceAccount:
+  name: sa-appconfig # mismo nombre en todos los ns
+
+# Health Check configuration
+healthCheck:
+  path: /api/DatabaseTest/health
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  readinessInitialDelay: 10
+  readinessPeriod: 5
+
+# Configuración de autoescalado
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPU: 70
+  targetMemory: 80

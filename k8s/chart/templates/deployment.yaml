@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "chart.fullname" . }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chart.selectorLabels" . | nindent 8 }}
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: {{ include "chart.name" . }}
+          image: "{{ .Values.image.repository }}:{{ required "tag requerido" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.ports.http }}
+              name: http
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: {{ .Values.environment | default "Development" | quote }}
+            - name: ASPNETCORE_URLS
+              value: "http://+:{{ .Values.ports.http }}"
+            - name: AzureAppConfigEndpoint
+              value: {{ required "endpoint requerido" .Values.appConfig.endpoint | quote }}
+            - name: AzureAppConfigLabel
+              value: {{ required "label requerido" .Values.appConfig.label | quote }}
+            {{- if .Values.workloadIdentity.clientId }}
+            - name: AZURE_CLIENT_ID
+              value: {{ .Values.workloadIdentity.clientId | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.path | default "/api/health" }}
+              port: http
+            initialDelaySeconds: {{ .Values.healthCheck.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .Values.healthCheck.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.healthCheck.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.healthCheck.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.path | default "/api/health" }}
+              port: http
+            initialDelaySeconds: {{ .Values.healthCheck.readinessInitialDelay | default 10 }}
+            periodSeconds: {{ .Values.healthCheck.readinessPeriod | default 5 }}
+            timeoutSeconds: {{ .Values.healthCheck.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.healthCheck.failureThreshold | default 3 }}
+          {{- if .Values.resources }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
