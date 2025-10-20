@@ -132,27 +132,48 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to QA environment
+      - name: Deploy with Helm to QA
         run: |
-          echo "🚀 Deploying to QA environment with kubectl"
+          echo "🚀 Deploying to QA environment with Helm"
           echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
           echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "🏷️ Config Label: ${{ vars.AZURE_APP_CONFIG_LABEL }}"
           echo "📁 Namespace: ${{ vars.KUBERNETES_NAMESPACE }}"
 
-          # Aplicar manifests con valores específicos de QA
-          sed -i "s|{{IMAGE_TAG}}|${{ needs.build.outputs.image-tag }}|g" k8s/deployment.yaml
-          sed -i "s|{{INGRESS_HOST}}|${{ vars.INGRESS_HOST }}|g" k8s/ingress.yaml
-          sed -i "s|{{ENVIRONMENT}}|${{ vars.APP_ENVIRONMENT }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_APP_CONFIG_ENDPOINT}}|${{ vars.AZURE_APP_CONFIG_ENDPOINT }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_APP_CONFIG_LABEL}}|${{ vars.AZURE_APP_CONFIG_LABEL }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_MANAGED_IDENTITY_CLIENT_ID}}|${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
-          sed -i "s|{{NAMESPACE}}|${{ vars.KUBERNETES_NAMESPACE }}|g" k8s/*.yaml
+          # Crear un tarball del chart para enviarlo
+          tar -czf chart.tar.gz k8s/chart/
 
           az aks command invoke \
             --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
             --name ${{ vars.AZURE_AKS_CLUSTER }} \
-            --file k8s/ \
-            --command "kubectl apply -f . -n ${{ vars.KUBERNETES_NAMESPACE }}"
+            --file chart.tar.gz \
+            --command "tar -xzf chart.tar.gz && helm upgrade --install ${{ env.IMAGE_NAME }} ./k8s/chart \
+              --set image.repository=${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }} \
+              --set image.tag=${{ needs.build.outputs.image-tag }} \
+              --set ingress.host=${{ vars.INGRESS_HOST }} \
+              --set environment=${{ vars.APP_ENVIRONMENT }} \
+              --set appConfig.endpoint=${{ vars.AZURE_APP_CONFIG_ENDPOINT }} \
+              --set appConfig.label=${{ vars.AZURE_APP_CONFIG_LABEL }} \
+              --set workloadIdentity.clientId=${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }} \
+              --namespace ${{ vars.KUBERNETES_NAMESPACE }} \
+              --create-namespace \
+              --wait \
+              --timeout=10m"
+
+      - name: Verify Helm deployment in QA
+        run: |
+          echo "✅ Verificando deployment de Helm en QA..."
+
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --command "helm status ${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }}"
+
+          echo "📊 Estado de pods:"
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get pods -l app=${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }} -o wide"
 
   # Job 4: Deploy a UAT usando kubectl manifests
   deploy-uat:
@@ -169,27 +190,48 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to UAT environment
+      - name: Deploy with Helm to UAT
         run: |
-          echo "🚀 Deploying to UAT environment with kubectl"
+          echo "🚀 Deploying to UAT environment with Helm"
           echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
           echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "🏷️ Config Label: ${{ vars.AZURE_APP_CONFIG_LABEL }}"
           echo "📁 Namespace: ${{ vars.KUBERNETES_NAMESPACE }}"
 
-          # Aplicar manifests con valores específicos de UAT
-          sed -i "s|{{IMAGE_TAG}}|${{ needs.build.outputs.image-tag }}|g" k8s/deployment.yaml
-          sed -i "s|{{INGRESS_HOST}}|${{ vars.INGRESS_HOST }}|g" k8s/ingress.yaml
-          sed -i "s|{{ENVIRONMENT}}|${{ vars.APP_ENVIRONMENT }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_APP_CONFIG_ENDPOINT}}|${{ vars.AZURE_APP_CONFIG_ENDPOINT }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_APP_CONFIG_LABEL}}|${{ vars.AZURE_APP_CONFIG_LABEL }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_MANAGED_IDENTITY_CLIENT_ID}}|${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
-          sed -i "s|{{NAMESPACE}}|${{ vars.KUBERNETES_NAMESPACE }}|g" k8s/*.yaml
+          # Crear un tarball del chart para enviarlo
+          tar -czf chart.tar.gz k8s/chart/
 
           az aks command invoke \
             --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
             --name ${{ vars.AZURE_AKS_CLUSTER }} \
-            --file k8s/ \
-            --command "kubectl apply -f . -n ${{ vars.KUBERNETES_NAMESPACE }}"
+            --file chart.tar.gz \
+            --command "tar -xzf chart.tar.gz && helm upgrade --install ${{ env.IMAGE_NAME }} ./k8s/chart \
+              --set image.repository=${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }} \
+              --set image.tag=${{ needs.build.outputs.image-tag }} \
+              --set ingress.host=${{ vars.INGRESS_HOST }} \
+              --set environment=${{ vars.APP_ENVIRONMENT }} \
+              --set appConfig.endpoint=${{ vars.AZURE_APP_CONFIG_ENDPOINT }} \
+              --set appConfig.label=${{ vars.AZURE_APP_CONFIG_LABEL }} \
+              --set workloadIdentity.clientId=${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }} \
+              --namespace ${{ vars.KUBERNETES_NAMESPACE }} \
+              --create-namespace \
+              --wait \
+              --timeout=10m"
+
+      - name: Verify Helm deployment in UAT
+        run: |
+          echo "✅ Verificando deployment de Helm en UAT..."
+
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --command "helm status ${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }}"
+
+          echo "📊 Estado de pods:"
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get pods -l app=${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }} -o wide"
 
   # Job 5: Deploy a PROD usando kubectl manifests
   deploy-prod:
@@ -206,26 +248,47 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to PROD environment
+      - name: Deploy with Helm to PROD
         run: |
-          echo "🚀 Deploying to PROD environment with kubectl"
+          echo "🚀 Deploying to PROD environment with Helm"
           echo "📦 Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}"
           echo "🌐 Host: ${{ vars.INGRESS_HOST }}"
+          echo "🏷️ Config Label: ${{ vars.AZURE_APP_CONFIG_LABEL }}"
           echo "📁 Namespace: ${{ vars.KUBERNETES_NAMESPACE }}"
 
-          # Aplicar manifests con valores específicos de PROD
-          sed -i "s|{{IMAGE_TAG}}|${{ needs.build.outputs.image-tag }}|g" k8s/deployment.yaml
-          sed -i "s|{{INGRESS_HOST}}|${{ vars.INGRESS_HOST }}|g" k8s/ingress.yaml
-          sed -i "s|{{ENVIRONMENT}}|${{ vars.APP_ENVIRONMENT }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_APP_CONFIG_ENDPOINT}}|${{ vars.AZURE_APP_CONFIG_ENDPOINT }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_APP_CONFIG_LABEL}}|${{ vars.AZURE_APP_CONFIG_LABEL }}|g" k8s/deployment.yaml
-          sed -i "s|{{AZURE_MANAGED_IDENTITY_CLIENT_ID}}|${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }}|g" k8s/serviceaccount.yaml
-          sed -i "s|{{NAMESPACE}}|${{ vars.KUBERNETES_NAMESPACE }}|g" k8s/*.yaml
+          # Crear un tarball del chart para enviarlo
+          tar -czf chart.tar.gz k8s/chart/
 
           az aks command invoke \
             --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
             --name ${{ vars.AZURE_AKS_CLUSTER }} \
-            --file k8s/ \
-            --command "kubectl apply -f . -n ${{ vars.KUBERNETES_NAMESPACE }}"
+            --file chart.tar.gz \
+            --command "tar -xzf chart.tar.gz && helm upgrade --install ${{ env.IMAGE_NAME }} ./k8s/chart \
+              --set image.repository=${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }} \
+              --set image.tag=${{ needs.build.outputs.image-tag }} \
+              --set ingress.host=${{ vars.INGRESS_HOST }} \
+              --set environment=${{ vars.APP_ENVIRONMENT }} \
+              --set appConfig.endpoint=${{ vars.AZURE_APP_CONFIG_ENDPOINT }} \
+              --set appConfig.label=${{ vars.AZURE_APP_CONFIG_LABEL }} \
+              --set workloadIdentity.clientId=${{ vars.AZURE_MANAGED_IDENTITY_CLIENT_ID }} \
+              --namespace ${{ vars.KUBERNETES_NAMESPACE }} \
+              --create-namespace \
+              --wait \
+              --timeout=10m"
+
+      - name: Verify Helm deployment in PROD
+        run: |
+          echo "✅ Verificando deployment de Helm en PROD..."
+
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --command "helm status ${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }}"
+
+          echo "📊 Estado de pods:"
+          az aks command invoke \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_AKS_CLUSTER }} \
+            --command "kubectl get pods -l app=${{ env.IMAGE_NAME }} -n ${{ vars.KUBERNETES_NAMESPACE }} -o wide"
 
           echo "✅ Production deployment completed successfully!"
