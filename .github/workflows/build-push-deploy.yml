@@ -7,7 +7,6 @@ on:
       - develop # Desarrollo
       - qa # QA
       - uat # UAT
-      - helm # Testing Helm
   workflow_dispatch:
 
 env:
@@ -63,7 +62,7 @@ jobs:
 
   # Job 2: Deploy a DEV usando Helm
   deploy-dev:
-    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/helm'
+    if: github.ref == 'refs/heads/develop'
     needs: build
     runs-on: ubuntu-latest
     environment: dev
