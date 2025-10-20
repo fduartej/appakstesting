@@ -1,6 +1,21 @@
 using appakstesting.Services;
+using Azure.Identity;
+using Microsoft.Extensions.Configuration.AzureAppConfiguration;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Lee el endpoint desde env var (o hardcodea si prefieres)
+var appConfigEndpoint = Environment.GetEnvironmentVariable("AzureAppConfigEndpoint")
+                        ?? "https://appconfig-noprod-01.azconfig.io";
+
+// Conectar a Azure App Configuration y a Key Vault (referencias)
+builder.Configuration.AddAzureAppConfiguration(options =>
+{
+    options.Connect(new Uri(appConfigEndpoint), new DefaultAzureCredential())
+           .Select("app:db-testapi:*", labelFilter: "dev")
+           .ConfigureKeyVault(kv => kv.SetCredential(new DefaultAzureCredential()));
+});
+
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
@@ -48,6 +63,12 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.MapGet("/testconfig", (IConfiguration config) =>
+{
+    var conn = config["app:db-testapi:ConnectionStrings--DefaultConnection"];
+    return Results.Ok(new { ConnectionString = conn ?? "(nulo)" });
+});
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

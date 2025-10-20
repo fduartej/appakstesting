@@ -25,17 +25,12 @@ spec:
               name: http
           env:
             - name: ASPNETCORE_ENVIRONMENT
-              value: "Production"
+              value: "Development"
             - name: ASPNETCORE_URLS
               value: "http://+:8080"
             # Ruta donde se montan los secretos de Key Vault
-            - name: KeyVault__SecretsPath
-              value: "/mnt/secrets-store"
-          # Montar secretos del Key Vault
-          volumeMounts:
-            - name: secrets-store
-              mountPath: "/mnt/secrets-store"
-              readOnly: true
+            - name: AzureAppConfigEndpoint
+              value: "https://appconfig-noprod-01.azconfig.io"
           # Health Checks
           livenessProbe:
             httpGet:
@@ -53,11 +48,3 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
-      # Volumen para Key Vault
-      volumes:
-        - name: secrets-store
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: "database-test-api-secrets"
