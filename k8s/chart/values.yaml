@@ -3,9 +3,9 @@ nameOverride: database-test-api
 
 # Imagen Docker
 image:
-  repository: crintegrationappsnoprod01.azurecr.io/database-test-api
-  pullPolicy: IfNotPresent
+  repository: "" # Se construye dinámicamente: ${AZURE_ACR_SERVER}/${IMAGE_NAME}
   tag: "" # lo inyecta CI (el mismo para todos los entornos)
+  pullPolicy: Always # Siempre descargar la imagen más reciente
 
 # Configuración de réplicas
 replicaCount: 2 # default; puedes sobreescribir por entorno
@@ -15,7 +15,7 @@ ports:
   http: 8080
 
 # Configuración de ambiente
-environment: Development
+environment: "" # dev | qa | uat | prod
 
 # Configuración de ingress
 ingress:
@@ -55,3 +55,11 @@ autoscaling:
   maxReplicas: 10
   targetCPU: 70
   targetMemory: 80
+# Variables de entorno adicionales (fallback si Azure App Config no está disponible)
+# Estas se pueden sobrescribir por entorno usando --set env.VARIABLE=value
+env:
+  # Estas son opcionales - si Azure App Config está configurado, se obtienen de ahí
+  # RULEENGINE_AZURE_STORAGE_CONNECTION_STRING: ""
+  # RULEENGINE_AZURE_STORAGE_CONTAINER_NAME: ""
+  # RULEENGINE_APP_LOCAL_DIRECTORY: "download"
+  # RULEENGINE_APPLICATIONINSIGHTS_CONNECTION_STRING: ""

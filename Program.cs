@@ -5,9 +5,9 @@ using Microsoft.Extensions.Configuration.AzureAppConfiguration;
 var builder = WebApplication.CreateBuilder(args);
 
 // Lee el endpoint y label desde env vars
-var appConfigEndpoint = Environment.GetEnvironmentVariable("AzureAppConfigEndpoint")
+var appConfigEndpoint = Environment.GetEnvironmentVariable("AZURE_APP_CONFIG_ENDPOINT")
                         ?? "https://appconfig-noprod-01.azconfig.io";
-var appConfigLabel = Environment.GetEnvironmentVariable("AzureAppConfigLabel") ?? "dev";
+var appConfigLabel = Environment.GetEnvironmentVariable("AZURE_APP_CONFIG_LABEL") ?? "dev";
 
 // Conectar a Azure App Configuration y a Key Vault (referencias)
 builder.Configuration.AddAzureAppConfiguration(options =>
@@ -71,13 +71,41 @@ app.MapGet("/testconfig", (IConfiguration config) =>
     return Results.Ok(new { ConnectionString = conn ?? "(nulo)" });
 });
 
+app.MapGet("/config/{key}/{label?}", (string key, string? label, IConfiguration config) =>
+{
+    try
+    {
+        // Si no se proporciona label, usar el label actual del ambiente
+        var configLabel = label ?? Environment.GetEnvironmentVariable("AZURE_APP_CONFIG_LABEL") ?? "dev";
+        // Obtener el valor de la configuración
+        var value = config[key];      
+        return Results.Ok(new 
+        { 
+            Key = key,
+            Label = configLabel,
+            Value = value ?? "(not found)",
+            Timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC")
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new 
+        { 
+            Error = "Error retrieving configuration",
+            Message = ex.Message,
+            Key = key,
+            Label = label
+        });
+    }
+});
+
 app.MapGet("/config-info", () =>
 {
     var configInfo = new
     {
-        Environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development",
-        AzureAppConfigEndpoint = Environment.GetEnvironmentVariable("AzureAppConfigEndpoint") ?? "https://appconfig-noprod-01.azconfig.io",
-        AzureAppConfigLabel = Environment.GetEnvironmentVariable("AzureAppConfigLabel") ?? "dev",
+        Environment = Environment.GetEnvironmentVariable("APP_ENVIRONMENT") ?? "Development",
+        AzureAppConfigEndpoint = Environment.GetEnvironmentVariable("AZURE_APP_CONFIG_ENDPOINT") ?? "https://appconfig-noprod-01.azconfig.io",
+        AzureAppConfigLabel = Environment.GetEnvironmentVariable("AZURE_APP_CONFIG_LABEL") ?? "dev",
         AzureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID") ?? "(not set)",
         Timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC")
     };
