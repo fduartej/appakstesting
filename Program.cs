@@ -14,6 +14,7 @@ builder.Configuration.AddAzureAppConfiguration(options =>
 {
     options.Connect(new Uri(appConfigEndpoint), new DefaultAzureCredential())
            .Select("app:db-testapi:*", labelFilter: appConfigLabel)
+           .Select("app:ruleengine:*", labelFilter: appConfigLabel)
            .ConfigureKeyVault(kv => kv.SetCredential(new DefaultAzureCredential()));
 });
 
