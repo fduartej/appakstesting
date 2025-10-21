@@ -6,6 +6,11 @@ metadata:
     {{- include "chart.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "chart.selectorLabels" . | nindent 6 }}
@@ -14,28 +19,41 @@ spec:
       labels:
         {{- include "chart.selectorLabels" . | nindent 8 }}
         azure.workload.identity/use: "true"
+      annotations:
+        # Force pod restart on every deployment
+        deployment.kubernetes.io/revision: "{{ .Values.image.tag }}"
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       containers:
         - name: {{ include "chart.name" . }}
           image: "{{ .Values.image.repository }}:{{ required "tag requerido" .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
           ports:
             - containerPort: {{ .Values.ports.http }}
               name: http
           env:
-            - name: ASPNETCORE_ENVIRONMENT
+            - name: APP_ENVIRONMENT
               value: {{ .Values.environment | default "Development" | quote }}
-            - name: ASPNETCORE_URLS
+            - name: APP_PORT
+              value: {{ .Values.ports.http | quote }}              
+            - name: APP_URLS
               value: "http://+:{{ .Values.ports.http }}"
-            - name: AzureAppConfigEndpoint
+            - name: AZURE_APP_CONFIG_ENDPOINT
               value: {{ required "endpoint requerido" .Values.appConfig.endpoint | quote }}
-            - name: AzureAppConfigLabel
+            - name: AZURE_APP_CONFIG_LABEL
               value: {{ required "label requerido" .Values.appConfig.label | quote }}
+            # Azure Workload Identity
             {{- if .Values.workloadIdentity.clientId }}
             - name: AZURE_CLIENT_ID
               value: {{ .Values.workloadIdentity.clientId | quote }}
             {{- end }}
+            # Fallback environment variables (si Azure App Config no está disponible)
+            {{- if .Values.env }}
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}            
           livenessProbe:
             httpGet:
               path: {{ .Values.healthCheck.path | default "/api/health" }}

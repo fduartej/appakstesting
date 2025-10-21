@@ -10,7 +10,6 @@ on:
   workflow_dispatch:
 
 env:
-  DOTNET_VERSION: "9.0.x"
   IMAGE_NAME: database-test-api
 
 jobs:
@@ -27,16 +26,14 @@ jobs:
       - name: Set build variables
         id: vars
         run: |
-          echo "image-tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "short-sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Build application
-        run: dotnet build --configuration Release
+          # Usar timestamp + SHA para garantizar unicidad
+          BUILD_TIME=$(date +%Y%m%d-%H%M%S)
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          UNIQUE_TAG="${BUILD_TIME}-${SHORT_SHA}"
+          echo "image-tag=${UNIQUE_TAG}" >> $GITHUB_OUTPUT
+          echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "build-time=${BUILD_TIME}" >> $GITHUB_OUTPUT
+          echo "✅ Generated unique tag: ${UNIQUE_TAG}"
 
       - name: Login to Azure
         uses: azure/login@v1
@@ -52,13 +49,30 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          echo "🐳 Building image with tag: ${{ steps.vars.outputs.image-tag }}"
-          docker build -t ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }} .
+          echo "🐳 Building image with unique tag: ${{ steps.vars.outputs.image-tag }}"
+          echo "📅 Build time: ${{ steps.vars.outputs.build-time }}"
+          echo "🔑 Short SHA: ${{ steps.vars.outputs.short-sha }}"
+
+          # Build de la imagen con cache busting
+          docker build \
+            --no-cache \
+            --build-arg BUILD_TIME=${{ steps.vars.outputs.build-time }} \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg GIT_BRANCH=${{ github.ref_name }} \
+            -t ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }} .
+
+          # Push de la imagen con tag único
           docker push ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }}
 
-          # También tag como latest para el branch correspondiente
-          docker tag ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }} ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest
+          # Tag como latest solo para el branch principal
+          if [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "develop" ]; then
+            docker tag ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }} ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest-${{ github.ref_name }}
+            docker push ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest-${{ github.ref_name }}
+            echo "📦 Also tagged as: latest-${{ github.ref_name }}"
+          fi
+
+          echo "✅ Image built and pushed successfully!"
+          echo "📦 Unique Image: ${{ secrets.AZURE_ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image-tag }}"
 
   # Job 2: Deploy a DEV usando Helm
   deploy-dev:
