@@ -23,3 +23,4 @@ INGRESS_HOST
 dev-database-test-api.calidda.com.pe
 KUBERNETES_NAMESPACE
 default
+
